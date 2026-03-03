@@ -1,0 +1,20 @@
+[project]
+name = "hx-testing"
+version = "0.1.0"
+description = "End-to-end testing for the Hx web application using Playwright"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.49",
+    "pytest>=8.0",
+    "pytest-playwright>=0.6",
+    "python-dotenv>=1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: full end-to-end workflow tests",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s %(levelname)s %(name)s: %(message)s"

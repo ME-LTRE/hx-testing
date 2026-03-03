@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+test-results/
+playwright-report/
+*.png
+*.pdf
+.auth_state.json
+.browser_profile/
+output/
