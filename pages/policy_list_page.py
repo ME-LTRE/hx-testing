@@ -63,7 +63,7 @@ class PolicyListPage:
     def set_model_version(self, version: str):
         logger.info("Step 5a: setting model version '%s'", version)
         self._dialog.get_by_label("Model Version").click()
-        self.page.get_by_role("option", name=version).click()
+        self.page.get_by_role("option", name=version, exact=True).click()
 
     # Step 6 — click Create
     def click_create(self):

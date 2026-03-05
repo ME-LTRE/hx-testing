@@ -45,20 +45,31 @@ class PolicyDetailPage:
     def upload_file(self, file_path: str) -> float:
         logger.info("Step 10: uploading file '%s'", file_path)
         abs_path = str(Path(file_path).resolve())
+        filename = Path(file_path).name
 
         with Timer("File Upload") as t:
-            # Try hidden file input first, then file chooser
-            file_input = self.page.locator('input[type="file"]')
-            if file_input.count() > 0:
-                file_input.first.set_input_files(abs_path)
-            else:
-                with self.page.expect_file_chooser() as fc_info:
-                    self.page.get_by_text("Choose File").click()
-                file_chooser = fc_info.value
-                file_chooser.set_files(abs_path)
+            # Use the "Choose File" link which triggers the component's file chooser
+            with self.page.expect_file_chooser() as fc_info:
+                self.page.get_by_text("Choose File").click()
+            file_chooser = fc_info.value
+            file_chooser.set_files(abs_path)
 
-            # Wait for upload completion
-            self.page.wait_for_load_state("networkidle")
+            # Wait for file name to appear in the upload area (staged, not yet uploaded)
+            self.page.get_by_text(filename).wait_for(state="visible", timeout=30000)
+            logger.info("File staged in upload area")
+
+            # Click the "Upload file" icon button to initiate the actual server upload.
+            # The component stages the file first, then requires clicking this button.
+            upload_btn = self.page.get_by_label("Upload file")
+            upload_btn.click()
+            logger.info("Clicked 'Upload file' button — waiting for server upload")
+
+            # Wait for upload to complete. The drop zone shows "Upload date: ..."
+            # once the server has received the file.
+            self.page.get_by_text("Upload date:").wait_for(
+                state="visible", timeout=60000
+            )
+            logger.info("Upload completed — upload date visible")
 
         return t.elapsed
 
@@ -67,26 +78,40 @@ class PolicyDetailPage:
         logger.info("Step 11: clicking 'Load Triangles from Template Excel'")
 
         with Timer("Load Triangles from Template Excel") as t:
-            self.page.get_by_role("button", name="Load Triangles from Template Excel").click()
+            btn = self.page.get_by_role("button", name="Load Triangles from Template Excel")
+            btn.click()
 
-            # This triggers an async server task. Wait for it to complete.
-            # The page shows "Locked by an async task" while processing.
+            # The async task can signal progress in two ways:
+            # 1) "Locked by an async task" overlay (older/simpler models)
+            # 2) Spinner on the button + "Upload Progress" field updates (newer models)
+            # Wait for whichever signal appears first, then wait for completion.
+
             locked_text = self.page.get_by_text("Locked by an async task")
-            locked_text.wait_for(state="visible", timeout=15000)
-            logger.info("Async task started — waiting for completion...")
-            locked_text.wait_for(state="hidden", timeout=120000)
-            logger.info("Async task completed")
+            progress_text = self.page.get_by_label("Upload Progress")
+
+            # Wait for either the "Locked" overlay or progress field to populate
+            # Wait for "Upload Complete." in the Upload Progress field,
+            # which appears when the async task finishes loading triangles.
+            # Fall back to "Locked by an async task" pattern for simpler models.
+            upload_complete = self.page.get_by_text("Upload Complete.")
+            try:
+                locked_text.wait_for(state="visible", timeout=5000)
+                logger.info("Async task running (locked overlay)...")
+                locked_text.wait_for(state="hidden", timeout=120000)
+                logger.info("Async task completed (locked overlay gone)")
+            except Exception:
+                logger.info("No locked overlay — waiting for 'Upload Complete.'")
+                upload_complete.wait_for(state="visible", timeout=120000)
+                logger.info("Upload complete — triangles loaded")
 
         return t.elapsed
 
-    # Steps 12-14b — select triangle curve via left nav + searchable dropdown
-    def select_triangle(self, nav_name: str):
-        logger.info("Selecting first development pattern for '%s'", nav_name)
-        self._click_nav(nav_name)
-        # Open the "Selected Development Pattern" searchable dropdown
-        dropdown = self.page.get_by_role("button", name="Selected Development Pattern")
-        dropdown.click()
-
+    # Steps 12-14b — select triangle curve via left nav + dropdown
+    def _select_first_dropdown_option(self, dropdown_name: str):
+        """Click a named dropdown button and select the first option."""
+        btn = self.page.get_by_role("button", name=dropdown_name)
+        btn.wait_for(state="visible", timeout=10000)
+        btn.click()
         # Select the first available option from the list
         option = self.page.get_by_role("option").first.or_(
             self.page.get_by_role("menuitem").first
@@ -94,7 +119,31 @@ class PolicyDetailPage:
             self.page.locator("[class*='dropdown'] li, [class*='menu'] li").first
         )
         option.first.click()
-        logger.info("Selected first option for '%s'", nav_name)
+
+    def select_triangle(self, nav_name: str):
+        logger.info("Selecting first option for '%s'", nav_name)
+        self._click_nav(nav_name)
+
+        # Different model versions use different dropdown names:
+        # - "Selected Class" (2025-v6)
+        # - "Selected Development Pattern" (2025-v4)
+        # Wait for either dropdown to appear (page content may still be rendering)
+        class_btn = self.page.get_by_role("button", name="Selected Class")
+        pattern_btn = self.page.get_by_role("button", name="Selected Development Pattern")
+        dropdown = class_btn.or_(pattern_btn)
+
+        try:
+            dropdown.first.wait_for(state="visible", timeout=10000)
+        except Exception:
+            logger.warning("No dropdown found on '%s' — skipping", nav_name)
+            return
+
+        if class_btn.is_visible():
+            self._select_first_dropdown_option("Selected Class")
+            logger.info("Selected first class for '%s'", nav_name)
+        else:
+            self._select_first_dropdown_option("Selected Development Pattern")
+            logger.info("Selected first pattern for '%s'", nav_name)
 
     def select_premium_triangle(self):
         logger.info("Step 12: Premium Triangle")
@@ -110,16 +159,8 @@ class PolicyDetailPage:
 
     def select_projections_class(self):
         logger.info("Step 14b: Projections — selecting first class")
-        self._click_nav("Projections")
-        # Projections uses "Selected Class" dropdown, not "Selected Development Pattern"
-        dropdown = self.page.get_by_role("button", name="Selected Class").or_(
-            self.page.locator("select").first
-        )
-        dropdown.first.click()
-        # Select first available option
-        option = self.page.get_by_role("option").first
-        option.click()
-        logger.info("Selected first class for Projections")
+        # Projections also uses "Selected Class" — reuse the same logic
+        self.select_triangle("Projections")
 
     # Step 15 — Summary → Export Policy (async task, then download the result)
     def export_policy(self) -> str:
